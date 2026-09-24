@@ -1,4 +1,18 @@
 <!DOCTYPE html>
+<!--
+  ============================================================
+  CARA MEMBUKA DI GITHUB:
+  ------------------------------------------------------------
+  Opsi 1 (paling mudah) — GitHub Pages:
+    1. Upload file ini ke repository dengan nama "index.html"
+    2. Buka Settings → Pages → Source: "main" branch, folder "/ (root)"
+    3. Tunggu 1-2 menit, buka: https://USERNAME.github.io/NAMA-REPO/
+  Opsi 2 — Preview cepat tanpa Pages:
+    Buka: https://htmlpreview.github.io/?URL_RAW_FILE_ANDA
+    Contoh: https://htmlpreview.github.io/?https://raw.githubusercontent.com/user/repo/main/index.html
+  Opsi 3 — Unduh file, buka langsung di browser (double-click).
+  ============================================================
+-->
 <html lang="id">
 <head>
 <meta charset="UTF-8">
@@ -102,8 +116,8 @@ body::before{
 #hud-score{color:var(--gold);}
 .board-wrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;}
 .board{
-  width:min(100%,calc(100vh - 205px));
-  width:min(100%,calc(100dvh - 205px));
+  width:min(100%,calc(100vh - 265px));
+  width:min(100%,calc(100dvh - 265px));
   aspect-ratio:1/1;
   display:grid;grid-template-columns:repeat(10,1fr);grid-template-rows:repeat(10,1fr);
   gap:2px;padding:4px;border-radius:14px;
@@ -135,8 +149,17 @@ body::before{
 }
 @keyframes pop{from{transform:scale(.35)}to{transform:scale(1)}}
 .controls{display:flex;align-items:center;gap:10px;flex-shrink:0;}
-#dice-canvas{width:92px;height:92px;flex-shrink:0;display:block;}
-#btn-roll{height:56px;font-size:15px;}
+#dice-canvas{width:80px;height:80px;flex-shrink:0;display:block;}
+#btn-roll{height:52px;font-size:14px;}
+.auto-row{display:flex;gap:8px;flex-shrink:0;}
+.auto-btn{
+  flex:1;padding:10px 12px;font-size:12.5px;border-radius:11px;
+  transition:.2s;
+}
+.auto-btn.on{
+  color:#04202b;background:linear-gradient(135deg,#0ea5e9,#22d3ee);
+  border-color:transparent;font-weight:800;
+}
 
 /* ---------- MODAL ---------- */
 .modal{
@@ -204,7 +227,7 @@ body::before{
 
 @media (max-width:360px){
   .hero h1{font-size:20px;}
-  #dice-canvas{width:78px;height:78px;}
+  #dice-canvas{width:68px;height:68px;}
   .cell .ic{font-size:9px;}
 }
 </style>
@@ -409,10 +432,9 @@ body::before{
       <input id="inp-kelas" type="text" placeholder="Contoh: XII IPS 1" maxlength="16" autocomplete="off">
       <button class="btn primary" id="btn-start">▶ Mulai Bermain</button>
       <p class="hint">
-        Setiap kali melempar dadu, <b>soal akan muncul lebih dulu</b>.<br>
-        Jawab <b>benar</b> → pion maju sesuai mata dadu.<br>
-        Jawab <b>salah</b> → pion tetap di tempat.<br>
-        Waspadai ular 🐍 dan manfaatkan tangga 🪜!
+        <b>Mode Otomatis</b> aktif — setiap soal dijawab, dadu langsung dilempar lagi.<br>
+        Jawab <b>benar</b> → pion maju. Jawab <b>salah</b> → pion tetap.<br>
+        Teruskan sampai kotak <b>100</b> untuk mendapatkan sertifikat! 🏁
       </p>
     </div>
 
@@ -438,6 +460,10 @@ body::before{
       <canvas id="dice-canvas"></canvas>
       <button class="btn gold" id="btn-roll">🎲 Lempar Dadu</button>
     </div>
+
+    <div class="auto-row">
+      <button class="btn ghost auto-btn on" id="btn-auto">⚡ Mode Otomatis: AKTIF</button>
+    </div>
   </section>
 
   <!-- ================= RESULT SCREEN ================= -->
@@ -448,4 +474,877 @@ body::before{
     </div>
 
     <div class="score-row">
-      <div class="score-box"><span>NILAI</span><
+      <div class="score-box"><span>NILAI</span><b id="res-nilai">0</b></div>
+      <div class="score-box"><span>PREDIKAT</span><b id="res-predikat">—</b></div>
+    </div>
+
+    <div class="card cert-preview">
+      <canvas id="cert-canvas"></canvas>
+    </div>
+
+    <div class="result-actions">
+      <button class="btn gold" id="btn-download">⬇ Unduh Sertifikat (PNG)</button>
+      <button class="btn ghost" id="btn-again">🔄 Main Lagi</button>
+    </div>
+  </section>
+
+</div>
+
+<!-- ================= MODAL SOAL ================= -->
+<div class="modal" id="modal">
+  <div class="modal-card">
+    <div class="modal-head">
+      <span class="badge" id="q-badge">Kotak 1</span>
+      <span class="badge mission" id="q-type">MISI</span>
+    </div>
+    <p class="q-text" id="q-text">—</p>
+    <div class="options" id="q-options"></div>
+    <div class="feedback" id="q-feedback"></div>
+    <button class="btn primary" id="btn-continue">Lanjutkan ▶</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   1. KONFIGURASI PAPAN
+   ========================================================= */
+const LADDERS = { 3:22, 8:26, 20:41, 28:77, 50:91, 71:92, 88:99 };
+const SNAKES  = { 17:7, 54:34, 62:19, 87:24, 93:73, 95:75, 98:79 };
+const BONUS   = [12, 33, 45, 58, 66, 80];
+const GOAL    = 100;
+
+/* =========================================================
+   2. BANK SOAL — dibaca dari JSON
+   ========================================================= */
+const RAW = JSON.parse(document.getElementById('bank-soal').textContent);
+
+function shuffle(arr){
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--){
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+const QUESTIONS = RAW.soal.map(item => {
+  const opts = item.pilihan.map((t, i) => ({ t, ok: i === item.jawaban }));
+  const sh = shuffle(opts);
+  return {
+    q: item.pertanyaan,
+    opts: sh.map(o => o.t),
+    correct: sh.findIndex(o => o.ok),
+    exp: item.penjelasan
+  };
+});
+
+/* =========================================================
+   3. STATE & PENYIMPANAN JSON (localStorage)
+   ========================================================= */
+const STORE_KEY = 'ularTanggaSosio_v1';
+
+const state = {
+  nama: '',
+  kelas: '',
+  pos: 0,
+  benar: 0,
+  dijawab: 0,
+  finished: false
+};
+
+let busy = false;
+let autoMode = true;      // MODE OTOMATIS: aktif secara default
+let autoTimer = null;
+let qPool = [];
+let currentQ = null;
+let questionResolve = null;
+
+function loadStore(){
+  try {
+    return JSON.parse(localStorage.getItem(STORE_KEY)) || { records: [] };
+  } catch(e){ return { records: [] }; }
+}
+function saveRecord(rec){
+  const s = loadStore();
+  s.records.unshift(rec);
+  s.records = s.records.slice(0, 50);
+  localStorage.setItem(STORE_KEY, JSON.stringify(s));
+}
+function renderHistory(){
+  const s = loadStore();
+  const card = document.getElementById('history-card');
+  const list = document.getElementById('history-list');
+  if (!s.records.length){ card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  list.innerHTML = s.records.slice(0, 5).map(r => `
+    <div class="hist-row">
+      <div>
+        <div class="nm">${escapeHtml(r.nama)}</div>
+        <div class="kl">${escapeHtml(r.kelas)} · ${r.tanggal}</div>
+      </div>
+      <div class="vl">${r.nilai} (${r.predikat})</div>
+    </div>`).join('');
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+/* =========================================================
+   4. THREE.JS — DADU 3D (WebGL)
+   ========================================================= */
+let renderer, scene, camera, diceMesh, diceAnim = null;
+let diceFallback2D = false;
+
+const FACE_ROT = {
+  1: { x: 0,          y: 0,          z: 0 },
+  2: { x: Math.PI/2,  y: 0,          z: 0 },
+  3: { x: 0,          y: -Math.PI/2, z: 0 },
+  4: { x: 0,          y: Math.PI/2,  z: 0 },
+  5: { x: -Math.PI/2, y: 0,          z: 0 },
+  6: { x: 0,          y: Math.PI,    z: 0 }
+};
+
+function makeFaceTexture(num){
+  const S = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d');
+
+  const g = ctx.createLinearGradient(0, 0, S, S);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(1, '#e8eef7');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+
+  ctx.strokeStyle = '#c7d3e3';
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, S - 10, S - 10);
+
+  const P = {
+    tl: [66, 66], tr: [190, 66],
+    ml: [66, 128], c: [128, 128], mr: [190, 128],
+    bl: [66, 190], br: [190, 190]
+  };
+  const LAYOUT = {
+    1: ['c'],
+    2: ['tl', 'br'],
+    3: ['tl', 'c', 'br'],
+    4: ['tl', 'tr', 'bl', 'br'],
+    5: ['tl', 'tr', 'c', 'bl', 'br'],
+    6: ['tl', 'tr', 'ml', 'mr', 'bl', 'br']
+  };
+
+  ctx.fillStyle = '#dc2626';
+  (LAYOUT[num] || []).forEach(k => {
+    const [x, y] = P[k];
+    ctx.beginPath();
+    ctx.arc(x, y, 21, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function initDice(){
+  const canvas = document.getElementById('dice-canvas');
+
+  // Fallback jika Three.js gagal dimuat
+  if (typeof THREE === 'undefined'){
+    console.warn('Three.js tidak tersedia — menggunakan dadu 2D.');
+    diceFallback2D = true;
+    setupFallback2D(canvas);
+    return;
+  }
+
+  try {
+    const SIZE = 80;
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(SIZE, SIZE, false);
+    canvas.style.width = SIZE + 'px';
+    canvas.style.height = SIZE + 'px';
+
+    scene = new THREE.Scene();
+    camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+    camera.position.set(0, 0, 5.6);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+
+    const d1 = new THREE.DirectionalLight(0xffffff, 1.0);
+    d1.position.set(4, 6, 5);
+    scene.add(d1);
+
+    const d2 = new THREE.DirectionalLight(0x7dd3fc, 0.55);
+    d2.position.set(-5, -3, 2);
+    scene.add(d2);
+
+    const d3 = new THREE.DirectionalLight(0xfbbf24, 0.35);
+    d3.position.set(0, -5, -4);
+    scene.add(d3);
+
+    const size = 1.7;
+    const geo = new THREE.BoxGeometry(size, size, size);
+    const mats = [3, 4, 2, 5, 1, 6].map(n =>
+      new THREE.MeshStandardMaterial({
+        map: makeFaceTexture(n),
+        roughness: 0.42,
+        metalness: 0.08
+      })
+    );
+
+    diceMesh = new THREE.Mesh(geo, mats);
+    diceMesh.rotation.set(0.25, -0.4, 0);
+    scene.add(diceMesh);
+
+    const ringGeo = new THREE.RingGeometry(1.55, 1.75, 48);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x22d3ee, transparent: true, opacity: 0.18, side: THREE.DoubleSide
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.position.z = -1.5;
+    scene.add(ring);
+
+    animateLoop();
+  } catch (err){
+    console.warn('WebGL gagal — beralih ke dadu 2D:', err);
+    diceFallback2D = true;
+    setupFallback2D(canvas);
+  }
+}
+
+function setupFallback2D(canvas){
+  canvas.width = 160;
+  canvas.height = 160;
+  canvas.style.width = '80px';
+  canvas.style.height = '80px';
+  const ctx = canvas.getContext('2d');
+  draw2DDice(ctx, 1);
+  canvas._ctx = ctx;
+}
+
+function draw2DDice(ctx, num){
+  const S = 160;
+  ctx.clearRect(0, 0, S, S);
+  const g = ctx.createLinearGradient(0, 0, S, S);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(1, '#e8eef7');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  ctx.strokeStyle = '#c7d3e3';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, S - 6, S - 6);
+
+  const P = {
+    1: [[80, 80]],
+    2: [[45, 45], [115, 115]],
+    3: [[40, 40], [80, 80], [120, 120]],
+    4: [[45, 45], [115, 45], [45, 115], [115, 115]],
+    5: [[45, 45], [115, 45], [80, 80], [45, 115], [115, 115]],
+    6: [[45, 40], [115, 40], [45, 80], [115, 80], [45, 120], [115, 120]]
+  };
+  ctx.fillStyle = '#dc2626';
+  (P[num] || P[1]).forEach(([x, y]) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 13, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function animateLoop(){
+  requestAnimationFrame(animateLoop);
+  const t = performance.now();
+
+  if (diceAnim){
+    const p = Math.min(1, (t - diceAnim.start) / diceAnim.dur);
+    const e = 1 - Math.pow(1 - p, 3);
+    diceMesh.rotation.x = diceAnim.from.x + (diceAnim.to.x - diceAnim.from.x) * e;
+    diceMesh.rotation.y = diceAnim.from.y + (diceAnim.to.y - diceAnim.from.y) * e;
+    diceMesh.rotation.z = diceAnim.from.z + (diceAnim.to.z - diceAnim.from.z) * e;
+
+    if (p >= 1){
+      const a = diceAnim;
+      diceAnim = null;
+      diceMesh.rotation.set(a.base.x, a.base.y, a.base.z);
+      a.resolve();
+    }
+  } else if (diceMesh){
+    diceMesh.position.y = Math.sin(t / 700) * 0.07;
+  }
+
+  if (renderer && scene && camera) renderer.render(scene, camera);
+}
+
+function animateDiceTo(value){
+  // Fallback 2D
+  if (diceFallback2D){
+    const canvas = document.getElementById('dice-canvas');
+    const ctx = canvas._ctx;
+    return new Promise(resolve => {
+      let frame = 0;
+      const total = 18;
+      const iv = setInterval(() => {
+        draw2DDice(ctx, 1 + Math.floor(Math.random() * 6));
+        frame++;
+        if (frame >= total){
+          clearInterval(iv);
+          draw2DDice(ctx, value);
+          resolve();
+        }
+      }, 55);
+    });
+  }
+
+  return new Promise(resolve => {
+    if (!diceMesh){ resolve(); return; }
+
+    const base = FACE_ROT[value];
+    const from = {
+      x: diceMesh.rotation.x,
+      y: diceMesh.rotation.y,
+      z: diceMesh.rotation.z
+    };
+
+    const axis = base.x !== 0 ? 'x' : (base.y !== 0 ? 'y' : 'z');
+    const to = { x: base.x, y: base.y, z: base.z };
+    let target = base[axis];
+    const minimum = from[axis] + Math.PI * 4;
+    while (target < minimum) target += Math.PI * 2;
+    to[axis] = target;
+
+    diceAnim = { from, to, base, start: performance.now(), dur: 950, resolve };
+  });
+}
+
+/* =========================================================
+   5. PAPAN PERMAINAN
+   ========================================================= */
+function buildBoard(){
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+
+  for (let row = 0; row < 10; row++){
+    const boardRow = 9 - row;
+    let nums = [];
+    for (let i = 1; i <= 10; i++) nums.push(boardRow * 10 + i);
+    if (boardRow % 2 === 1) nums.reverse();
+
+    nums.forEach(n => {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.n = n;
+
+      let icon = '';
+      if (LADDERS[n]){ cell.classList.add('ladder'); icon = '🪜'; }
+      else if (SNAKES[n]){ cell.classList.add('snake'); icon = '🐍'; }
+      else if (BONUS.includes(n)){ cell.classList.add('bonus'); icon = '❓'; }
+      if (n === 1) cell.classList.add('start');
+      if (n === GOAL){ cell.classList.add('finish'); icon = '🏁'; }
+
+      cell.innerHTML = `<span class="num">${n}</span>` +
+                       (icon ? `<span class="ic">${icon}</span>` : '');
+      board.appendChild(cell);
+    });
+  }
+}
+
+function renderToken(){
+  const old = document.querySelector('.token');
+  if (old) old.remove();
+  if (state.pos < 1) return;
+  const cell = document.querySelector(`.cell[data-n="${state.pos}"]`);
+  if (!cell) return;
+  const token = document.createElement('div');
+  token.className = 'token';
+  cell.appendChild(token);
+}
+
+function updateHUD(){
+  document.getElementById('hud-pos').textContent = state.pos;
+  document.getElementById('hud-score').textContent = `${state.benar}/${state.dijawab}`;
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* =========================================================
+   6. MODE OTOMATIS
+   ========================================================= */
+function updateAutoBtn(){
+  const b = document.getElementById('btn-auto');
+  if (autoMode){
+    b.textContent = '⚡ Mode Otomatis: AKTIF';
+    b.classList.add('on');
+  } else {
+    b.textContent = '⏸ Mode Otomatis: NONAKTIF';
+    b.classList.remove('on');
+  }
+}
+
+function scheduleAutoRoll(delay = 900){
+  if (autoTimer) clearTimeout(autoTimer);
+  if (!autoMode || state.finished) return;
+  autoTimer = setTimeout(() => {
+    autoTimer = null;
+    if (autoMode && !busy && !state.finished){
+      rollDice();
+    }
+  }, delay);
+}
+
+function toggleAuto(){
+  autoMode = !autoMode;
+  updateAutoBtn();
+  if (!autoMode && autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  if (autoMode && !busy && !state.finished){
+    scheduleAutoRoll(300);
+  }
+}
+
+/* =========================================================
+   7. ALUR PERMAINAN
+   Dadu → soal → jawab → benar: maju | salah: tetap → auto ulang
+   ========================================================= */
+async function rollDice(){
+  if (busy || state.finished) return;
+  busy = true;
+
+  const btn = document.getElementById('btn-roll');
+  btn.disabled = true;
+  btn.textContent = '⏳ Mengocok...';
+
+  // 1) Kocok dadu
+  const value = 1 + Math.floor(Math.random() * 6);
+  await animateDiceTo(value);
+
+  btn.textContent = `🎲 Dadu: ${value}`;
+  await sleep(200);
+
+  // 2) Soal muncul — murid wajib menjawab
+  const benar = await askQuestion(value);
+
+  // 3) Jawaban benar → pion maju ; salah → tetap
+  if (benar){
+    await moveSteps(value);
+    await handleLanding();
+  } else {
+    await sleep(250);
+  }
+
+  btn.textContent = '🎲 Lempar Dadu';
+  busy = false;
+
+  if (!state.finished){
+    btn.disabled = false;
+    // Mode otomatis: lempar lagi setelah jeda
+    scheduleAutoRoll(900);
+  } else {
+    if (autoTimer){ clearTimeout(autoTimer); autoTimer = null; }
+  }
+}
+
+async function moveSteps(n){
+  for (let i = 0; i < n; i++){
+    if (state.pos >= GOAL) break;
+    state.pos++;
+    renderToken();
+    updateHUD();
+    await sleep(135);
+  }
+}
+
+async function handleLanding(){
+  if (state.pos >= GOAL){ finishGame(); return; }
+  const sq = state.pos;
+  if (LADDERS[sq]){
+    await slideTo(LADDERS[sq]);
+  } else if (SNAKES[sq]){
+    await slideTo(SNAKES[sq]);
+  }
+  if (state.pos >= GOAL) finishGame();
+}
+
+async function slideTo(target){
+  await sleep(280);
+  state.pos = target;
+  renderToken();
+  updateHUD();
+  await sleep(320);
+}
+
+/* =========================================================
+   8. SISTEM SOAL
+   ========================================================= */
+function pickQuestion(){
+  if (qPool.length === 0) qPool = shuffle(QUESTIONS);
+  return qPool.pop();
+}
+
+function askQuestion(diceValue){
+  return new Promise(resolve => {
+    questionResolve = resolve;
+    currentQ = pickQuestion();
+    state.dijawab++;
+
+    const modal    = document.getElementById('modal');
+    const badge    = document.getElementById('q-badge');
+    const typeEl   = document.getElementById('q-type');
+    const qText    = document.getElementById('q-text');
+    const optsWrap = document.getElementById('q-options');
+    const fb       = document.getElementById('q-feedback');
+    const btnNext  = document.getElementById('btn-continue');
+
+    badge.textContent = '🎲 DADU: ' + diceValue;
+    badge.className = 'badge';
+    typeEl.textContent = 'JAWAB BENAR → MAJU ' + diceValue;
+
+    qText.textContent = currentQ.q;
+    fb.className = 'feedback';
+    fb.innerHTML = '';
+    btnNext.style.display = 'none';
+
+    optsWrap.innerHTML = '';
+    const KEYS = ['A', 'B', 'C', 'D'];
+    currentQ.opts.forEach((text, i) => {
+      const b = document.createElement('button');
+      b.className = 'opt';
+      b.innerHTML = `<span class="opt-key">${KEYS[i]}</span><span>${escapeHtml(text)}</span>`;
+      b.addEventListener('click', () => selectAnswer(i, diceValue));
+      optsWrap.appendChild(b);
+    });
+
+    modal.classList.add('show');
+  });
+}
+
+function selectAnswer(idx, diceValue){
+  const optsWrap = document.getElementById('q-options');
+  const buttons = [...optsWrap.querySelectorAll('.opt')];
+  const fb = document.getElementById('q-feedback');
+  const btnNext = document.getElementById('btn-continue');
+
+  buttons.forEach(b => b.disabled = true);
+  buttons[currentQ.correct].classList.add('correct');
+
+  const benar = idx === currentQ.correct;
+  if (benar) state.benar++;
+  if (!benar) buttons[idx].classList.add('wrong');
+
+  const header = benar
+    ? `✅ Jawaban benar! Pion maju ${diceValue} langkah.`
+    : `❌ Jawaban salah. Pion tetap di tempat.`;
+
+  fb.className = 'feedback show ' + (benar ? 'ok' : 'no');
+  fb.innerHTML = `<b>${header}</b>${escapeHtml(currentQ.exp)}`;
+
+  updateHUD();
+
+  btnNext.style.display = 'block';
+  btnNext.textContent = benar ? 'Lanjutkan ▶' : 'Lempar Lagi ▶';
+  btnNext.onclick = () => {
+    document.getElementById('modal').classList.remove('show');
+    const resolve = questionResolve;
+    questionResolve = null;
+    if (resolve) resolve(benar);
+  };
+}
+
+/* =========================================================
+   9. SELESAI & SERTIFIKAT
+   ========================================================= */
+function hitungNilai(){
+  if (state.dijawab === 0) return 0;
+  return Math.round((state.benar / state.dijawab) * 100);
+}
+function hitungPredikat(n){
+  if (n >= 90) return 'A';
+  if (n >= 80) return 'B';
+  if (n >= 70) return 'C';
+  return 'D';
+}
+
+function finishGame(){
+  state.finished = true;
+  if (autoTimer){ clearTimeout(autoTimer); autoTimer = null; }
+  document.getElementById('btn-roll').disabled = true;
+
+  const nilai = hitungNilai();
+  const predikat = hitungPredikat(nilai);
+
+  document.getElementById('res-nilai').textContent = nilai;
+  document.getElementById('res-predikat').textContent = predikat;
+  document.getElementById('res-sub').textContent =
+    `${state.nama} · ${state.kelas} · Benar ${state.benar} dari ${state.dijawab} soal`;
+
+  const now = new Date();
+  const tanggal = now.toLocaleDateString('id-ID', {
+    day: 'numeric', month: 'long', year: 'numeric'
+  });
+
+  const data = {
+    nama: state.nama,
+    kelas: state.kelas,
+    nilai,
+    predikat,
+    benar: state.benar,
+    total: state.dijawab,
+    tanggal
+  };
+
+  saveRecord({
+    nama: data.nama,
+    kelas: data.kelas,
+    nilai: data.nilai,
+    predikat: data.predikat,
+    benar: data.benar,
+    total: data.total,
+    tanggal
+  });
+
+  drawCertificate(data);
+
+  setTimeout(() => {
+    document.getElementById('screen-game').classList.remove('active');
+    document.getElementById('screen-result').classList.add('active');
+  }, 800);
+}
+
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawCertificate(data){
+  const W = 1000, H = 720;
+  const DPR = 2;
+  const canvas = document.getElementById('cert-canvas');
+  canvas.width  = W * DPR;
+  canvas.height = H * DPR;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  const bg = ctx.createLinearGradient(0, 0, W, H);
+  bg.addColorStop(0, '#f8fafc');
+  bg.addColorStop(0.5, '#fefce8');
+  bg.addColorStop(1, '#ecfeff');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  const corners = [[0,0],[W,0],[0,H],[W,H]];
+  corners.forEach(([cx, cy]) => {
+    const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 260);
+    rg.addColorStop(0, 'rgba(14,116,144,0.10)');
+    rg.addColorStop(1, 'rgba(14,116,144,0)');
+    ctx.fillStyle = rg;
+    ctx.fillRect(0, 0, W, H);
+  });
+
+  ctx.strokeStyle = '#0e7490';
+  ctx.lineWidth = 16;
+  ctx.strokeRect(28, 28, W - 56, H - 56);
+
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 4;
+  ctx.strokeRect(56, 56, W - 112, H - 112);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+
+  ctx.fillStyle = '#0e7490';
+  ctx.font = 'bold 44px Georgia, "Times New Roman", serif';
+  ctx.fillText('SERTIFIKAT', W / 2, 138);
+
+  ctx.fillStyle = '#f59e0b';
+  ctx.font = 'bold 18px Helvetica, Arial, sans-serif';
+  ctx.fillText('PENGHARGAAN PENYELESAIAN GAME EDUKASI', W / 2, 168);
+
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 230, 190);
+  ctx.lineTo(W / 2 + 230, 190);
+  ctx.stroke();
+
+  ctx.fillStyle = '#64748b';
+  ctx.font = '17px Helvetica, Arial, sans-serif';
+  ctx.fillText('Diberikan kepada peserta didik yang telah menyelesaikan game', W / 2, 224);
+  ctx.fillText('"ULAR TANGGA PERUBAHAN SOSIAL"', W / 2, 248);
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 54px Georgia, "Times New Roman", serif';
+  ctx.fillText(String(data.nama).toUpperCase(), W / 2, 328);
+
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(W / 2 - 260, 348);
+  ctx.lineTo(W / 2 + 260, 348);
+  ctx.stroke();
+
+  ctx.fillStyle = '#334155';
+  ctx.font = 'bold 21px Helvetica, Arial, sans-serif';
+  ctx.fillText('Kelas ' + data.kelas, W / 2, 385);
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '15px Helvetica, Arial, sans-serif';
+  ctx.fillText('Mata Pelajaran Sosiologi — Materi Perubahan Sosial', W / 2, 412);
+
+  const boxY = 440, boxH = 100, boxW = 210;
+
+  function statBox(x, label, value, color){
+    ctx.save();
+    roundRect(ctx, x, boxY, boxW, boxH, 16);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = 'bold 13px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x + boxW / 2, boxY + 32);
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 44px Helvetica, Arial, sans-serif';
+    ctx.fillText(String(value), x + boxW / 2, boxY + 78);
+  }
+
+  statBox(W / 2 - boxW - 14, 'NILAI', data.nilai, '#0e7490');
+  statBox(W / 2 + 14, 'PREDIKAT', data.predikat, '#d97706');
+
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#64748b';
+  ctx.font = '15px Helvetica, Arial, sans-serif';
+  ctx.fillText('Jawaban benar: ' + data.benar + ' dari ' + data.total + ' soal', 110, 592);
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = '14px Helvetica, Arial, sans-serif';
+  ctx.fillText('Tanggal: ' + data.tanggal, 110, 620);
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#64748b';
+  ctx.font = '15px Helvetica, Arial, sans-serif';
+  ctx.fillText('Guru Sosiologi', W - 110, 592);
+
+  ctx.fillStyle = '#0f172a';
+  ctx.font = 'bold 21px Georgia, "Times New Roman", serif';
+  ctx.fillText('Damiana Betsy, S.Pd.', W - 110, 628);
+
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  ctx.moveTo(W - 330, 638);
+  ctx.lineTo(W - 110, 638);
+  ctx.stroke();
+}
+
+/* =========================================================
+   10. KONTROL UI
+   ========================================================= */
+function startGame(){
+  const nama = document.getElementById('inp-nama').value.trim();
+  const kelas = document.getElementById('inp-kelas').value.trim();
+
+  if (!nama){
+    alert('Silakan isi nama lengkapmu terlebih dahulu.');
+    document.getElementById('inp-nama').focus();
+    return;
+  }
+  if (!kelas){
+    alert('Silakan isi kelasmu terlebih dahulu.');
+    document.getElementById('inp-kelas').focus();
+    return;
+  }
+
+  state.nama = nama;
+  state.kelas = kelas;
+  state.pos = 0;
+  state.benar = 0;
+  state.dijawab = 0;
+  state.finished = false;
+  qPool = [];
+
+  document.getElementById('hud-name').textContent = nama.split(' ')[0];
+  document.getElementById('hud-pos').textContent = '0';
+  document.getElementById('hud-score').textContent = '0/0';
+  document.getElementById('btn-roll').disabled = false;
+  document.getElementById('btn-roll').textContent = '🎲 Lempar Dadu';
+
+  buildBoard();
+  renderToken();
+  updateAutoBtn();
+
+  document.getElementById('screen-start').classList.remove('active');
+  document.getElementById('screen-result').classList.remove('active');
+  document.getElementById('screen-game').classList.add('active');
+
+  // Jika mode otomatis aktif → mulai lempar otomatis
+  if (autoMode){
+    scheduleAutoRoll(700);
+  }
+}
+
+function resetToStart(){
+  if (autoTimer){ clearTimeout(autoTimer); autoTimer = null; }
+  state.finished = true;
+  document.getElementById('screen-result').classList.remove('active');
+  document.getElementById('screen-game').classList.remove('active');
+  document.getElementById('screen-start').classList.add('active');
+  renderHistory();
+}
+
+function downloadCertificate(){
+  const canvas = document.getElementById('cert-canvas');
+  const link = document.createElement('a');
+  link.download = 'Sertifikat_' + state.nama.replace(/\s+/g, '_') + '.png';
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}
+
+/* =========================================================
+   11. INISIALISASI
+   ========================================================= */
+document.addEventListener('DOMContentLoaded', () => {
+  buildBoard();
+  renderHistory();
+
+  try { initDice(); }
+  catch (err){ console.warn('Inisialisasi dadu gagal:', err); }
+
+  document.getElementById('btn-start').addEventListener('click', startGame);
+  document.getElementById('btn-roll').addEventListener('click', () => {
+    if (autoTimer){ clearTimeout(autoTimer); autoTimer = null; }
+    rollDice();
+  });
+  document.getElementById('btn-auto').addEventListener('click', toggleAuto);
+  document.getElementById('btn-download').addEventListener('click', downloadCertificate);
+  document.getElementById('btn-again').addEventListener('click', resetToStart);
+
+  document.getElementById('inp-nama').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('inp-kelas').focus();
+  });
+  document.getElementById('inp-kelas').addEventListener('keydown', e => {
+    if (e.key === 'Enter') startGame();
+  });
+
+  updateAutoBtn();
+});
+</script>
+</body>
+</html>
